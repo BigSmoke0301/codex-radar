@@ -1,0 +1,7 @@
+{
+  "main": "server.js",
+  "output": "build/codex-radar-sea.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false
+}

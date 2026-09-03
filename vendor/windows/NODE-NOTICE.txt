@@ -1,0 +1,13 @@
+Node.js v22.23.2 Windows x64 runtime
+
+Source archive:
+https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip
+
+Official SHA-256:
+1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97
+
+Node.js license:
+https://github.com/nodejs/node/blob/v22.23.2/LICENSE
+
+The distributed CodexRadar.exe is created by injecting this project's
+server.js into the official Node.js executable using Node SEA and postject.

@@ -1,0 +1,22 @@
+{
+  "name": "codex-radar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "本机 Codex 任务与用量仪表盘（零 npm 依赖）",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "smoke": "node smoke-test.js",
+    "generate:alarm": "node scripts/generate-alarm.js",
+    "build:windows": "node scripts/generate-alarm.js && node scripts/build-windows-sea.js",
+    "build:macos": "node scripts/build-macos-sea.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "postject": "1.0.0-alpha.6"
+  }
+}

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f6f7fb">
+    <title>Codex Radar · 本机任务与用量</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <div>
+            <h1>Codex Radar</h1>
+            <p>本机任务与用量实时监控</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span id="connection-pill" class="connection-pill is-connecting"><span class="status-dot"></span><span id="connection-text">连接中</span></span>
+          <button id="theme-toggle" class="icon-button" type="button" title="切换主题" aria-label="切换主题">☼</button>
+          <button id="test-alert-button" class="alert-button" type="button" title="测试提醒：播放约 6 秒强提醒（通知、铃声和中文播报）"><span aria-hidden="true">🚨</span> 测试强提醒</button>
+          <button id="stop-alert-button" class="stop-alert-button" type="button" title="立即停止正在播放的强提醒"><span aria-hidden="true">■</span> 停止提醒</button>
+          <button id="refresh-button" class="refresh-button" type="button"><span class="refresh-icon">↻</span> 刷新</button>
+          <span id="alert-feedback" class="alert-feedback" role="status" aria-live="polite"></span>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero-grid" aria-label="概览">
+          <article class="hero-card hero-card-running">
+            <div class="hero-card-label">当前运行中</div>
+            <div class="hero-card-value" id="running-count">—</div>
+            <div class="hero-card-foot"><span class="pulse-dot"></span> 每 3 秒自动同步</div>
+          </article>
+          <article class="hero-card">
+            <div class="hero-card-label">最近已结束</div>
+            <div class="hero-card-value" id="completed-count">—</div>
+            <div class="hero-card-foot">包含完成、失败与中断</div>
+          </article>
+          <article class="hero-card hero-card-plan">
+            <div class="hero-card-label">当前方案</div>
+            <div class="hero-card-value hero-card-plan-value" id="plan-value">—</div>
+            <div class="hero-card-foot" id="account-type">账户信息读取中</div>
+          </article>
+        </section>
+
+        <section class="panel" aria-labelledby="running-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">LIVE TASKS</p>
+              <h2 id="running-heading">正在运行</h2>
+            </div>
+            <span id="running-heading-count" class="section-count">—</span>
+          </div>
+          <div id="running-list" class="task-list" aria-live="polite"></div>
+        </section>
+
+        <section id="attention-panel" class="panel attention-panel" aria-labelledby="attention-heading" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow eyebrow-warning">CHECK NEEDED</p>
+              <h2 id="attention-heading">需要核对</h2>
+            </div>
+            <span id="attention-heading-count" class="section-count section-count-warning">—</span>
+          </div>
+          <div id="attention-list" class="task-list" aria-live="polite"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="completed-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RECENT HISTORY</p>
+              <h2 id="completed-heading">最近已结束</h2>
+            </div>
+            <span id="completed-heading-count" class="section-count">—</span>
+          </div>
+          <div id="completed-list" class="history-list" aria-live="polite"></div>
+        </section>
+
+        <section class="panel usage-panel" aria-labelledby="usage-heading">
+          <div class="section-heading usage-heading">
+            <div>
+              <p class="eyebrow">ACCOUNT USAGE</p>
+              <h2 id="usage-heading">用量与限额</h2>
+            </div>
+            <a class="usage-link" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noreferrer">打开官方用量页 ↗</a>
+          </div>
+          <div id="usage-unavailable" class="usage-unavailable" hidden>
+            <span class="notice-icon">!</span>
+            <div><strong>用量暂不可用</strong><p id="usage-unavailable-message">请稍后刷新，或打开官方用量页查看。</p></div>
+          </div>
+          <div id="usage-content" class="usage-content">
+            <div class="usage-meta-row">
+              <span>方案 <strong id="usage-plan">—</strong></span>
+              <span>限额 <strong id="usage-limit-name">—</strong></span>
+              <span>数据源 <strong>本机 app-server</strong></span>
+            </div>
+            <div id="usage-windows" class="usage-windows"></div>
+            <div class="credits-card" id="credits-card">
+              <div class="credits-icon">✦</div>
+              <div><span>Credits</span><strong id="credits-value">—</strong></div>
+              <small id="credits-note">—</small>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>仅在本机读取 Codex app-server，不读取或暴露授权凭据。</span>
+        <span>最后更新：<time id="last-updated">—</time></span>
+      </footer>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
