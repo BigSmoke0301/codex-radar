@@ -15,6 +15,11 @@ const copies = [
   [path.join(root, 'vendor', 'windows', 'SQLITE-NOTICE.txt'), path.join(output, 'tools', 'SQLITE-NOTICE.txt')],
   [path.join(root, 'vendor', 'windows', 'NODE-NOTICE.txt'), path.join(output, 'NODE-NOTICE.txt')],
   [path.join(root, 'WINDOWS-README.txt'), path.join(output, '使用说明.txt')],
+  [path.join(root, 'windows', 'CodexRadar-Watchdog.ps1'), path.join(output, 'CodexRadar-Watchdog.ps1')],
+  [path.join(root, 'windows', 'Install 24小时常驻.ps1'), path.join(output, 'Install 24小时常驻.ps1')],
+  [path.join(root, 'windows', 'Uninstall 24小时常驻.ps1'), path.join(output, 'Uninstall 24小时常驻.ps1')],
+  [path.join(root, 'windows', '安装24小时常驻.cmd'), path.join(output, '安装24小时常驻.cmd')],
+  [path.join(root, 'windows', '关闭24小时常驻.cmd'), path.join(output, '关闭24小时常驻.cmd')],
 ];
 
 fs.mkdirSync(output, { recursive: true });
@@ -32,6 +37,7 @@ const checksumFiles = [
   'CodexRadar.exe',
   path.join('assets', 'alarm.wav'),
   path.join('tools', 'sqlite3.exe'),
+  'CodexRadar-Watchdog.ps1',
 ];
 const checksums = checksumFiles.map((relative) => {
   const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(output, relative))).digest('hex');

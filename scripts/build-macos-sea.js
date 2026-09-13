@@ -57,6 +57,11 @@ for (const name of ['index.html', 'app.js', 'styles.css']) {
 }
 fs.copyFileSync(path.join(root, 'macos', 'Info.plist'), path.join(contents, 'Info.plist'));
 fs.copyFileSync(path.join(root, 'MACOS-README.txt'), path.join(outputRoot, 'README-macOS.txt'));
+for (const name of ['Install 24小时常驻.command', 'Uninstall 24小时常驻.command']) {
+  const target = path.join(outputRoot, name);
+  fs.copyFileSync(path.join(root, 'macos', name), target);
+  fs.chmodSync(target, 0o755);
+}
 const stopCommand = path.join(outputRoot, 'Stop Codex Radar.command');
 fs.copyFileSync(path.join(root, 'macos', 'Stop Codex Radar.command'), stopCommand);
 fs.chmodSync(stopCommand, 0o755);

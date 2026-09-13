@@ -46,6 +46,9 @@ const MAX_ACTIVE_READS = 12;
 const MAX_DETAIL_THREADS = 32;
 const DEFAULT_STALE_AFTER_SECONDS = 30 * 60;
 const DEFAULT_THREAD_HISTORY_DB = path.join(os.homedir(), '.codex', 'thread_history_1.sqlite');
+const DEFAULT_MONITOR_STATE_FILE = path.join(os.homedir(), '.codex-radar', 'monitor-state.json');
+const MONITOR_STATE_VERSION = 1;
+const MAX_PERSISTED_NOTIFICATIONS = 1000;
 
 const STATUS_LABELS = {
   active: '运行中',
@@ -130,6 +133,28 @@ function safeError(error) {
   return safe.slice(0, 240) || '未知错误';
 }
 
+function loadMonitorState(statePath, fsImpl = fs) {
+  if (!statePath) return null;
+  try {
+    const parsed = JSON.parse(fsImpl.readFileSync(statePath, 'utf8'));
+    if (!parsed || parsed.version !== MONITOR_STATE_VERSION) return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveMonitorState(statePath, state, fsImpl = fs) {
+  if (!statePath) return false;
+  try {
+    fsImpl.mkdirSync(path.dirname(statePath), { recursive: true });
+    fsImpl.writeFileSync(statePath, `${JSON.stringify(state)}\n`, { encoding: 'utf8', mode: 0o600 });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function parseArgs(argv) {
   const options = {
     port: finiteNumber(process.env.CODEX_RADAR_PORT || process.env.PORT) || DEFAULT_PORT,
@@ -140,6 +165,7 @@ function parseArgs(argv) {
     alarmSeconds: normalizeAlarmSeconds(process.env.CODEX_RADAR_ALARM_SECONDS),
     refreshMs: finiteNumber(process.env.CODEX_RADAR_REFRESH_MS) || DEFAULT_REFRESH_MS,
     staleAfterSeconds: finiteNumber(process.env.CODEX_RADAR_STALE_AFTER_SECONDS) || DEFAULT_STALE_AFTER_SECONDS,
+    statePath: process.env.CODEX_RADAR_STATE_FILE || DEFAULT_MONITOR_STATE_FILE,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -157,6 +183,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--refresh-ms=')) options.refreshMs = Number(arg.slice('--refresh-ms='.length));
     else if (arg === '--stale-after-seconds' && argv[index + 1]) options.staleAfterSeconds = Number(argv[++index]);
     else if (arg.startsWith('--stale-after-seconds=')) options.staleAfterSeconds = Number(arg.slice('--stale-after-seconds='.length));
+    else if (arg === '--state-file' && argv[index + 1]) options.statePath = argv[++index];
+    else if (arg.startsWith('--state-file=')) options.statePath = arg.slice('--state-file='.length);
     else if (arg === '--help' || arg === '-h') options.help = true;
   }
 
@@ -1264,6 +1292,8 @@ class DashboardMonitor extends EventEmitter {
     this.sqliteReader = options.sqliteReader || readLocalThreadState;
     this.maxActiveReads = options.maxActiveReads || MAX_ACTIVE_READS;
     this.maxDetailThreads = options.maxDetailThreads || MAX_DETAIL_THREADS;
+    this.statePath = options.statePath || null;
+    this.fsImpl = options.fsImpl || fs;
     this.state = {
       generatedAt: new Date().toISOString(),
       lastUpdated: null,
@@ -1275,9 +1305,20 @@ class DashboardMonitor extends EventEmitter {
       completed: [],
       usage: unavailableUsage(),
     };
-    this.previous = new Map();
-    this.hasBaseline = false;
-    this.notified = new Set();
+    const persisted = loadMonitorState(this.statePath, this.fsImpl);
+    const previousEntries = persisted && Array.isArray(persisted.previous) ? persisted.previous : [];
+    this.previous = new Map(previousEntries
+      .filter((entry) => entry && typeof entry.id === 'string')
+      .map((entry) => [entry.id, {
+        running: Boolean(entry.running),
+        status: typeof entry.status === 'string' ? entry.status : 'unknown',
+        completedAt: finiteNumber(entry.completedAt),
+      }]));
+    this.hasBaseline = Boolean(persisted && finiteNumber(persisted.lastObservedAt) !== null);
+    this.lastObservedAt = persisted ? finiteNumber(persisted.lastObservedAt) : null;
+    this.notified = new Set(persisted && Array.isArray(persisted.notified)
+      ? persisted.notified.filter((key) => typeof key === 'string').slice(-MAX_PERSISTED_NOTIFICATIONS)
+      : []);
     this.refreshPromise = null;
     this.timer = null;
     this.client.on('notification', (notification) => {
@@ -1496,19 +1537,63 @@ class DashboardMonitor extends EventEmitter {
 
   _detectTransitions(records) {
     const current = new Map(records.map((record) => [record.id, record]));
+    const observedAt = Date.now() / 1000;
     if (!this.hasBaseline) {
-      this.previous = new Map(records.map((record) => [record.id, { running: record.running, status: record.status, title: record.title }]));
+      this.previous = new Map(records.map((record) => [record.id, {
+        running: record.running,
+        status: record.status,
+        completedAt: finiteNumber(record.completedAt),
+      }]));
       this.hasBaseline = true;
+      this.lastObservedAt = observedAt;
+      this._persistMonitorState();
       return;
     }
     for (const record of records) {
       const old = this.previous.get(record.id);
-      if (old && old.running && record.terminal && !this.notified.has(`${record.id}:${record.status}`)) {
-        this.notified.add(`${record.id}:${record.status}`);
+      const completedAt = finiteNumber(record.completedAt) || finiteNumber(record.updatedAt);
+      const completionStamp = completedAt === null ? 'unknown' : Math.round(completedAt * 1000);
+      const key = `${record.id}:${record.status}:${completionStamp}`;
+      const transitioned = Boolean(old && old.running && record.terminal);
+      // Also catch a short task that started and finished between polls, or a
+      // completion that happened while a launchd/Task Scheduler restart was
+      // in progress.  This path is enabled only after a persisted/observed
+      // baseline exists, so the first-ever launch never rings for old history.
+      const completedSinceLastObservation = Boolean(
+        record.terminal && this.lastObservedAt !== null
+        && completedAt !== null && completedAt >= this.lastObservedAt - 1
+        && (!old || finiteNumber(old.completedAt) !== completedAt)
+      );
+      if ((transitioned || completedSinceLastObservation) && !this.notified.has(key)) {
+        this.notified.add(key);
         this._dispatchAlert(record);
       }
     }
-    this.previous = new Map(Array.from(current.entries()).map(([id, record]) => [id, { running: record.running, status: record.status, title: record.title }]));
+    if (this.notified.size > MAX_PERSISTED_NOTIFICATIONS) {
+      this.notified = new Set(Array.from(this.notified).slice(-MAX_PERSISTED_NOTIFICATIONS));
+    }
+    this.previous = new Map(Array.from(current.entries()).map(([id, record]) => [id, {
+      running: record.running,
+      status: record.status,
+      completedAt: finiteNumber(record.completedAt),
+    }]));
+    this.lastObservedAt = observedAt;
+    this._persistMonitorState();
+  }
+
+  _persistMonitorState() {
+    if (!this.statePath) return false;
+    return saveMonitorState(this.statePath, {
+      version: MONITOR_STATE_VERSION,
+      lastObservedAt: this.lastObservedAt,
+      previous: Array.from(this.previous.entries()).slice(0, MAX_THREADS).map(([id, record]) => ({
+        id,
+        running: Boolean(record && record.running),
+        status: record && typeof record.status === 'string' ? record.status : 'unknown',
+        completedAt: finiteNumber(record && record.completedAt),
+      })),
+      notified: Array.from(this.notified).slice(-MAX_PERSISTED_NOTIFICATIONS),
+    }, this.fsImpl);
   }
 
   /**
@@ -1866,6 +1951,7 @@ async function main(argv = process.argv.slice(2)) {
     alarmSeconds: options.alarmSeconds,
     refreshMs: options.refreshMs,
     staleAfterSeconds: options.staleAfterSeconds,
+    statePath: options.statePath,
   });
   const server = createHttpServer({ monitor, publicDir: findPublicDirectory() });
   let sleepPrevention = null;

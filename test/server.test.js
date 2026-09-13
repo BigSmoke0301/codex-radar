@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 const {
@@ -273,6 +275,103 @@ test('completed, failed, and interrupted transitions each alert once', () => {
     monitor._detectTransitions([{ id, status, running: false, terminal: true }]);
     assert.deepEqual(notifications, [status]);
     assert.deepEqual(sounds, [status]);
+  }
+});
+
+test('a continued thread can alert again for a later completed turn', () => {
+  const alerts = [];
+  const monitor = new DashboardMonitor({
+    notify: (record) => alerts.push(record.completedAt),
+    noNotify: false,
+    noSound: true,
+  });
+  const now = Date.now() / 1000;
+  const terminal = (completedAt) => ({
+    id: 'continued-thread',
+    title: '继续对话任务',
+    status: 'completed',
+    statusLabel: '已完成',
+    running: false,
+    terminal: true,
+    completedAt,
+    updatedAt: completedAt,
+  });
+  const running = { ...terminal(null), status: 'active', running: true, terminal: false };
+
+  monitor._detectTransitions([terminal(now - 10)]);
+  monitor._detectTransitions([running]);
+  monitor._detectTransitions([terminal(now)]);
+  monitor._detectTransitions([running]);
+  monitor._detectTransitions([terminal(now + 1)]);
+
+  assert.deepEqual(alerts, [now, now + 1]);
+});
+
+test('monitor state survives restart and prevents missed or duplicate completion alerts', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-radar-state-test.'));
+  const statePath = path.join(tempDir, 'monitor-state.json');
+  const running = { id: 'thread-restart', title: '跨重启任务', status: 'active', running: true, terminal: false, updatedAt: Date.now() / 1000 };
+  const completed = { ...running, status: 'completed', statusLabel: '已完成', running: false, terminal: true, completedAt: Date.now() / 1000 };
+  try {
+    const first = new DashboardMonitor({ statePath, noNotify: true, noSound: true });
+    first._detectTransitions([running]);
+    assert.equal(fs.existsSync(statePath), true);
+
+    const alerts = [];
+    const second = new DashboardMonitor({
+      statePath,
+      notify: (record) => alerts.push(record.id),
+      noNotify: false,
+      noSound: true,
+    });
+    second._detectTransitions([completed]);
+    assert.deepEqual(alerts, ['thread-restart']);
+
+    const afterAnotherRestart = [];
+    const third = new DashboardMonitor({
+      statePath,
+      notify: (record) => afterAnotherRestart.push(record.id),
+      noNotify: false,
+      noSound: true,
+    });
+    third._detectTransitions([completed]);
+    assert.deepEqual(afterAnotherRestart, []);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('persisted observation catches a task completed while Radar was offline', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-radar-offline-test.'));
+  const statePath = path.join(tempDir, 'monitor-state.json');
+  const now = Date.now() / 1000;
+  fs.writeFileSync(statePath, JSON.stringify({
+    version: 1,
+    lastObservedAt: now - 60,
+    previous: [],
+    notified: [],
+  }));
+  try {
+    const alerts = [];
+    const monitor = new DashboardMonitor({
+      statePath,
+      notify: (record) => alerts.push(record.id),
+      noNotify: false,
+      noSound: true,
+    });
+    monitor._detectTransitions([{
+      id: 'thread-finished-offline',
+      title: '停机期间完成',
+      status: 'completed',
+      statusLabel: '已完成',
+      running: false,
+      terminal: true,
+      completedAt: now - 5,
+      updatedAt: now - 5,
+    }]);
+    assert.deepEqual(alerts, ['thread-finished-offline']);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 

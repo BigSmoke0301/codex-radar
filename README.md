@@ -9,6 +9,7 @@
 - 当前动作摘要：优先使用 app-server 的 `thread/read` / `thread/items/list` 返回的 plan、agentMessage、命令、工具调用和协作项。
 - 最近已完成、失败或中断的任务。
 - 运行中的任务转为完成、失败或中断时，默认同时弹出本地通知横幅，并启动约 24 秒的“强提醒”。macOS 重复播放 `Sosumi.aiff` 并用 `/usr/bin/say` 中文播报；Windows 重复播放随包附带的高响度 WAV，并通过 `System.Speech` 中文播报。首次扫描已有的已结束任务不会提醒，同一终态不会重复提醒。
+- 监控基线与已提醒记录会保存在 `~/.codex-radar/monitor-state.json`（Windows 为用户主目录下同名文件夹）。服务异常重启后不会重复提醒，并能补报停机或两次轮询间刚完成的任务。
 - 顶部“测试强提醒”按钮会用较短（默认约 6 秒）的通知、铃声和中文播报测试提醒；旁边的“停止提醒”可以立即终止当前的强提醒。
 - `account/read` 与 `account/rateLimits/read` 的方案、主/次窗口使用百分比、剩余百分比、窗口时长、重置倒计时和 Credits。
 - 连接状态、最后更新时间、手动刷新、3 秒自动刷新和浅色/深色主题。
@@ -19,6 +20,8 @@
 
 下载并完整解压 `Codex-Radar-Windows.zip`，双击 `CodexRadar.exe`。它已包含 Node 运行时、页面资源、高响度 WAV 与官方 `sqlite3.exe`，Windows 端无需另外安装 Node。请保持程序窗口运行（可以最小化）；关闭窗口会停止监控。运行期间会阻止 Windows 因空闲自动睡眠，但不保持屏幕常亮，也不修改永久电源设置。
 
+要让它登录后自动运行且异常退出自动拉起，双击包内的 `安装24小时常驻.cmd`。常驻模式在后台启动，不会每次弹出浏览器，并把自动强提醒延长到 60 秒。用 `关闭24小时常驻.cmd` 可永久关闭常驻任务。
+
 ### macOS
 
 在 Finder 中双击：
@@ -28,6 +31,8 @@ codex-radar/start.command
 ```
 
 通过 `start.command` 启动时，如果系统提供 `/usr/bin/caffeinate`，Radar 会以 `caffeinate -i` 运行，仅在 Radar 进程存活期间防止 Mac 因空闲自动休眠；退出终端或 Radar 后会自动恢复，不会永久修改系统设置。若找不到 `caffeinate`，会直接启动 Node.js。它不保持屏幕常亮（不使用 `-d`），合盖、关机或系统静音时仍无法保证提醒叫醒你。
+
+macOS 压缩包内可双击 `Install 24小时常驻.command`：它会把应用复制到 `~/Applications`，安装当前用户的 LaunchAgent，登录后自动启动，并在异常退出后约 10 秒重启。`Uninstall 24小时常驻.command` 会永久关闭常驻任务。源码目录也可以直接运行同名安装脚本。
 
 也可以在终端运行：
 
@@ -46,7 +51,9 @@ node server.js --port 3838 --no-sound
 node server.js --port 3838 --alarm-seconds 30
 ```
 
-也支持环境变量 `CODEX_RADAR_PORT`、`CODEX_RADAR_HOST`、`CODEX_RADAR_REFRESH_MS`、`CODEX_RADAR_ALARM_SECONDS`、`CODEX_RADAR_NO_NOTIFY=1`、`CODEX_RADAR_NO_SOUND=1` 和 `CODEX_RADAR_DB`。`CODEX_RADAR_ALARM_SECONDS` 控制自动任务强提醒时长，默认 24 秒，并限制在 5–60 秒；端口传 `0` 可让系统分配临时端口，适合测试。
+也支持环境变量 `CODEX_RADAR_PORT`、`CODEX_RADAR_HOST`、`CODEX_RADAR_REFRESH_MS`、`CODEX_RADAR_ALARM_SECONDS`、`CODEX_RADAR_NO_NOTIFY=1`、`CODEX_RADAR_NO_SOUND=1`、`CODEX_RADAR_DB` 和 `CODEX_RADAR_STATE_FILE`。`CODEX_RADAR_ALARM_SECONDS` 控制自动任务强提醒时长，默认 24 秒，并限制在 5–60 秒；端口传 `0` 可让系统分配临时端口，适合测试。
+
+“24 小时常驻”指电脑已开机并登录用户、没有进入真正睡眠时持续工作。关机、注销、合盖睡眠、系统静音、音量太低或音频输出设备断开时，任何本地软件都无法保证提醒；安装脚本不会擅自修改系统音量或系统安全策略。
 
 提醒通道彼此独立：`--no-notify` / `CODEX_RADAR_NO_NOTIFY=1` 只关闭通知横幅，声音和语音仍保持开启（除非另行指定 `--no-sound`）；`--no-sound` / `CODEX_RADAR_NO_SOUND=1` 会独立关闭所有铃声和语音。系统命令失败不会中断任务监控，强提醒到时会自动停止，不会无限循环。
 
