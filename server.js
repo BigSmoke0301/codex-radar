@@ -46,6 +46,11 @@ const MAX_ACTIVE_READS = 12;
 const MAX_DETAIL_THREADS = 32;
 const DEFAULT_STALE_AFTER_SECONDS = 30 * 60;
 const DEFAULT_THREAD_HISTORY_DB = path.join(os.homedir(), '.codex', 'thread_history_1.sqlite');
+// The desktop app updates this database while a turn is still running.  The
+// history projection can lag until the turn finishes, so it is not sufficient
+// on its own for distinguishing a live turn from the standalone app-server's
+// `notLoaded`/`interrupted` view.
+const DEFAULT_STATE_DB = path.join(os.homedir(), '.codex', 'state_5.sqlite');
 const DEFAULT_MONITOR_STATE_FILE = path.join(os.homedir(), '.codex-radar', 'monitor-state.json');
 const MONITOR_STATE_VERSION = 1;
 const MAX_PERSISTED_NOTIFICATIONS = 1000;
@@ -587,6 +592,19 @@ function deriveThreadRecord(thread, detail = {}) {
   const latestTurn = localTurn || appServerTurn;
   const stale = Boolean(detail.localStale && localTurn && localTurn.status === 'inProgress');
   let status = mapThreadStatus(thread && thread.status, latestTurn);
+  const latestTurnCompletedAt = toEpochSeconds(latestTurn && latestTurn.completedAt);
+  const unreliableTerminal = Boolean(
+    latestTurn && ['failed', 'interrupted'].includes(latestTurn.status) && latestTurnCompletedAt === null,
+  );
+  // A standalone app-server may expose a stale interrupted turn while the
+  // desktop process is still writing the same rollout.  Only trust terminal
+  // statuses with a real completion timestamp; otherwise use the desktop
+  // state's recent activity signal when available, and fall back to unknown.
+  if (unreliableTerminal && !detail.localRealtimeActive) {
+    status = { kind: 'unknown', label: STATUS_LABELS.unknown, running: false, flags: status.flags || [] };
+  } else if (detail.localRealtimeActive && (status.kind === 'notLoaded' || status.kind === 'unknown' || unreliableTerminal)) {
+    status = { kind: 'active', label: STATUS_LABELS.active, running: true, flags: status.flags || [] };
+  }
   // The local projection is the freshest cross-process signal.  In particular,
   // an inProgress turn wins over a new app-server connection's notLoaded state;
   // terminal local turns also prevent an old active notification from keeping
@@ -639,9 +657,14 @@ function deriveThreadRecord(thread, detail = {}) {
     startedAtIso: isoFromEpochSeconds(latestStartedAt || createdAt),
     updatedAt,
     updatedAtIso: isoFromEpochSeconds(updatedAt),
-    completedAt: terminal ? toEpochSeconds(latestTurn && latestTurn.completedAt) || updatedAt : null,
-    completedAtIso: terminal ? isoFromEpochSeconds(toEpochSeconds(latestTurn && latestTurn.completedAt) || updatedAt) : null,
+    // Never manufacture a completion time from thread.updatedAt.  Doing so
+    // made an uncompleted `interrupted` turn look terminal and changed the
+    // notification key on every refresh.
+    completedAt: terminal ? latestTurnCompletedAt : null,
+    completedAtIso: terminal ? isoFromEpochSeconds(latestTurnCompletedAt) : null,
     latestTurnStatus: latestTurn && latestTurn.status ? latestTurn.status : null,
+    latestTurnId: latestTurn && latestTurn.id ? String(latestTurn.id) : null,
+    localRealtimeActive: Boolean(detail.localRealtimeActive && !terminal),
     source: typeof (thread && thread.source) === 'string' ? thread.source : null,
   };
 }
@@ -848,12 +871,11 @@ ORDER BY thread_id, row_kind, rollout_ordinal DESC;
       maxBuffer: 24 * 1024 * 1024,
       windowsHide: true,
     });
-    if (!completed || completed.status !== 0 || !completed.stdout) return result;
-    output = JSON.parse(completed.stdout);
+    output = completed && completed.status === 0 && completed.stdout ? JSON.parse(completed.stdout) : [];
   } catch (_) {
-    return result;
+    output = [];
   }
-  if (!Array.isArray(output)) return result;
+  if (!Array.isArray(output)) output = [];
   for (const row of output) {
     if (!row || !row.thread_id) continue;
     const id = String(row.thread_id);
@@ -884,6 +906,51 @@ ORDER BY thread_id, row_kind, rollout_ordinal DESC;
     // sqlite returns items newest first; deriveThreadRecord accepts the same
     // order as thread/items/list, so keep it bounded and deterministic.
     state.items = state.items.slice(0, 24);
+  }
+
+  // The desktop state database is updated during an active turn, while the
+  // history projection above may not contain that turn until it completes.
+  // Read only thread metadata (never rollout contents, credentials, or raw
+  // log bodies) and merge its last-write timestamp into the projection.
+  const stateDbPath = options.stateDbPath || DEFAULT_STATE_DB;
+  if (stateDbPath && stateDbPath !== dbPath) {
+    try {
+      if (fs.statSync(stateDbPath).isFile()) {
+        const stateQuery = `
+SELECT id, updated_at, updated_at_ms, recency_at, recency_at_ms
+FROM threads
+WHERE id IN (${inClause});
+`;
+        const completed = sqlite(sqlitePath, ['-readonly', '-json', stateDbPath, stateQuery], {
+          encoding: 'utf8',
+          maxBuffer: 4 * 1024 * 1024,
+          windowsHide: true,
+        });
+        if (completed && completed.status === 0 && completed.stdout) {
+          const rows = JSON.parse(completed.stdout);
+          if (Array.isArray(rows)) {
+            for (const row of rows) {
+              if (!row || !row.id) continue;
+              const state = result.get(String(row.id)) || { latestTurn: null, items: [], lastActivityAt: null };
+              const activityAt = Math.max(
+                toEpochSeconds(row.updated_at) || 0,
+                toEpochSeconds(row.updated_at_ms) || 0,
+                toEpochSeconds(row.recency_at) || 0,
+                toEpochSeconds(row.recency_at_ms) || 0,
+                state.lastActivityAt || 0,
+              ) || null;
+              state.lastActivityAt = activityAt;
+              state.realtime = true;
+              state.realtimeUpdatedAt = activityAt;
+              result.set(String(row.id), state);
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // The state DB is an optional freshness signal.  If it is locked,
+      // missing, or changes schema, retain the history projection instead.
+    }
   }
   return result;
 }
@@ -1408,9 +1475,18 @@ class DashboardMonitor extends EventEmitter {
       const nowSeconds = Date.now() / 1000;
       for (const localState of localStates.values()) {
         const turn = localState && localState.latestTurn;
-        if (!turn || turn.status !== 'inProgress') continue;
-        const lastActivity = Math.max(toEpochSeconds(turn.startedAt) || 0, localState.lastActivityAt || 0);
-        localState.stale = lastActivity > 0 && nowSeconds - lastActivity > this.staleAfterSeconds;
+        const lastActivity = Math.max(toEpochSeconds(turn && turn.startedAt) || 0, localState.lastActivityAt || 0);
+        if (turn && turn.status === 'inProgress') {
+          localState.stale = lastActivity > 0 && nowSeconds - lastActivity > this.staleAfterSeconds;
+        }
+        // A recent state-db write is the desktop process's live heartbeat.
+        // Use it only to resolve the standalone app-server's notLoaded or
+        // missing-completion ambiguity; a terminal history turn remains
+        // authoritative when one is available.
+        localState.localRealtimeActive = Boolean(
+          localState.realtime && (!turn || turn.status === 'inProgress')
+          && lastActivity > 0 && nowSeconds - lastActivity <= this.staleAfterSeconds,
+        );
       }
       const active = threads.filter((thread) => {
         const type = thread && thread.status && thread.status.type;
@@ -1454,6 +1530,7 @@ class DashboardMonitor extends EventEmitter {
           localTurn: localState.latestTurn || null,
           localItems: Array.isArray(localState.items) ? localState.items : [],
           localStale: Boolean(localState.stale),
+          localRealtimeActive: Boolean(localState.localRealtimeActive),
           itemEntries: [],
         });
       }
@@ -1530,6 +1607,7 @@ class DashboardMonitor extends EventEmitter {
       localTurn: localState && localState.latestTurn ? localState.latestTurn : null,
       localItems: localState && Array.isArray(localState.items) ? localState.items : [],
       localStale: Boolean(localState && localState.stale),
+      localRealtimeActive: Boolean(localState && localState.localRealtimeActive),
       itemEntries,
       readThread: readResult && readResult.ok ? readResult.value.thread : null,
     };
@@ -1551,8 +1629,13 @@ class DashboardMonitor extends EventEmitter {
     }
     for (const record of records) {
       const old = this.previous.get(record.id);
-      const completedAt = finiteNumber(record.completedAt) || finiteNumber(record.updatedAt);
-      const completionStamp = completedAt === null ? 'unknown' : Math.round(completedAt * 1000);
+      const completedAt = finiteNumber(record.completedAt);
+      // Prefer the immutable turn id.  Falling back to updatedAt here caused
+      // a still-running/unknown turn to produce a new alert key on every
+      // refresh because thread.updatedAt keeps changing.
+      const completionStamp = completedAt === null
+        ? (record.latestTurnId ? `turn:${record.latestTurnId}` : 'unknown')
+        : Math.round(completedAt * 1000);
       const key = `${record.id}:${record.status}:${completionStamp}`;
       const transitioned = Boolean(old && old.running && record.terminal);
       // Also catch a short task that started and finished between polls, or a

@@ -147,6 +147,22 @@ test('current turn from the local projection wins over standalone notLoaded', ()
   assert.match(stale.summary, /可能已过期/);
 });
 
+test('desktop realtime heartbeat overrides a false interrupted status', () => {
+  const thread = {
+    id: 'thread-live', name: '仍在运行的任务', preview: '仍在运行的任务', cwd: '/tmp',
+    createdAt: 1788180000, updatedAt: 1788180100, status: { type: 'notLoaded' },
+  };
+  const staleServerTurn = { id: 'turn-live', status: 'interrupted', startedAt: 1788180000, completedAt: null };
+  const live = deriveThreadRecord(thread, { latestTurn: staleServerTurn, localRealtimeActive: true });
+  assert.equal(live.status, 'active');
+  assert.equal(live.running, true);
+  assert.equal(live.completedAt, null);
+
+  const unresolved = deriveThreadRecord(thread, { latestTurn: staleServerTurn, localRealtimeActive: false });
+  assert.equal(unresolved.status, 'unknown');
+  assert.equal(unresolved.terminal, false);
+});
+
 test('item summaries are concise and redact secret-looking command values', () => {
   const summary = summarizeItems([
     { type: 'commandExecution', status: 'inProgress', command: 'curl -H "Authorization: Bearer super-secret" --api-key=sk-123456 https://example.test' },
@@ -276,6 +292,19 @@ test('completed, failed, and interrupted transitions each alert once', () => {
     assert.deepEqual(notifications, [status]);
     assert.deepEqual(sounds, [status]);
   }
+});
+
+test('unknown terminal records do not create a new alert key as updatedAt changes', () => {
+  const alerts = [];
+  const monitor = new DashboardMonitor({
+    notify: (record) => alerts.push(record.id),
+    noNotify: false,
+    noSound: true,
+  });
+  monitor._detectTransitions([{ id: 'thread-unknown', status: 'active', running: true, terminal: false }]);
+  monitor._detectTransitions([{ id: 'thread-unknown', status: 'unknown', running: false, terminal: false, updatedAt: 1 }]);
+  monitor._detectTransitions([{ id: 'thread-unknown', status: 'unknown', running: false, terminal: false, updatedAt: 2 }]);
+  assert.deepEqual(alerts, []);
 });
 
 test('a continued thread can alert again for a later completed turn', () => {

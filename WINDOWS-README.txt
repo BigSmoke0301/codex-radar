@@ -48,4 +48,4 @@ Windows 版功能
 隐私
 ----
 服务只监听 127.0.0.1。它通过本机 Codex app-server 获取任务与用量，并只读查询
-%USERPROFILE%\\.codex\\thread_history_1.sqlite；不会读取浏览器 cookie 或输出认证 token。
+%USERPROFILE%\\.codex\\thread_history_1.sqlite 和 %USERPROFILE%\\.codex\\state_5.sqlite；不会读取浏览器 cookie 或输出认证 token。

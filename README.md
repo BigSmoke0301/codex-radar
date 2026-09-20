@@ -73,7 +73,7 @@ node server.js --port 3838 --alarm-seconds 30
 
 macOS 提醒使用系统自带的 `osascript`、`afplay` 和 `say`；Windows 使用 PowerShell、`System.Media.SoundPlayer`、`System.Speech` 与 Toast API。两端都不会修改系统音量。强提醒最多同时维护一个会话，并记录、清理它启动的子进程和定时器；服务停止、手动停止或下一次新提醒到来时都会清理。请注意：系统静音、音量很低、输出设备断开、合盖、关机或通知/语音权限设置仍可能让提醒听不见。
 
-独立启动的 app-server 只知道自己的内存 loaded-thread 集合，因而可能把桌面里正在跑的线程报告为 `notLoaded`。为了识别这一情况，Radar 只读查询 `~/.codex/thread_history_1.sqlite` 的 `thread_turns` 和 `thread_items` 两张表，并且仅查询 app-server 已返回的 thread ID。最新 turn 为 `inProgress` 时以它为准，最新 item 只用于生成短摘要；原始 JSON 会经过脱敏和长度限制后才进入页面。超过一段时间没有任何 turn/item 更新的 inProgress 会标记为“可能已失联”，避免把陈旧记录误报成健康运行。
+独立启动的 app-server 只知道自己的内存 loaded-thread 集合，因而可能把桌面里正在跑的线程报告为 `notLoaded`，甚至给出没有完成时间的 `interrupted`。为了识别这一情况，Radar 只读查询 `~/.codex/thread_history_1.sqlite` 的 `thread_turns` 和 `thread_items`，并读取 `~/.codex/state_5.sqlite` 中对应线程的更新时间作为桌面端实时心跳；两者都仅查询 app-server 已返回的 thread ID。桌面端有近期心跳时，未加载或缺少完成时间的中断会显示为“运行中”；没有可靠完成时间的终态会显示为“未知”，不会触发中断提醒。最新 item 只用于生成短摘要；原始 JSON 会经过脱敏和长度限制后才进入页面。超过一段时间没有任何 turn/item 更新的 inProgress 会标记为“可能已失联”，避免把陈旧记录误报成健康运行。
 
 如果 app-server 或用量接口不可用，界面会明确显示“暂不可用”，并提供官方页面：<https://chatgpt.com/codex/settings/usage>。不会用任务数量或其他指标伪造用量估算。
 
