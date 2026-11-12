@@ -257,7 +257,17 @@ function findCodexPath(options = {}) {
     addVersionedWindowsCandidates(candidates, pathApi.join(localAppData, 'ChatGPT'), readdirSyncImpl);
     addVersionedWindowsCandidates(candidates, pathApi.join(localAppData, 'Programs', 'ChatGPT'), readdirSyncImpl);
   } else {
-    candidates.push('/Applications/ChatGPT.app/Contents/Resources/codex');
+    // Recent ChatGPT desktop releases moved Codex into the bundled
+    // codex-cli directory. Keep the legacy location as a fallback for older
+    // installations, and support both system-wide and per-user app installs.
+    for (const appPath of [
+      '/Applications/ChatGPT.app',
+      path.join(homeDir, 'Applications', 'ChatGPT.app'),
+    ]) {
+      candidates.push(path.join(appPath, 'Contents', 'Resources', 'codex-cli', 'CodexCLI.app', 'Contents', 'MacOS', 'codex'));
+      candidates.push(path.join(appPath, 'Contents', 'Resources', 'codex-cli', 'bin', 'codex'));
+      candidates.push(path.join(appPath, 'Contents', 'Resources', 'codex'));
+    }
     candidates.push(path.join(homeDir, '.codex', 'bin', 'codex'));
   }
   const pathEntries = String(env.PATH || '').split(platform === 'win32' ? ';' : path.delimiter).filter(Boolean);

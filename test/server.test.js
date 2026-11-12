@@ -409,6 +409,20 @@ test('default sound uses a built-in macOS system sound path', () => {
   assert.equal(SYSTEM_SOUND_PATH, '/System/Library/Sounds/Glass.aiff');
 });
 
+test('macOS discovers Codex in the current ChatGPT desktop bundle layout', () => {
+  const currentPath = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
+  const statSyncImpl = (candidate) => {
+    if (candidate !== currentPath) throw new Error('missing');
+    return { isFile: () => true, mode: 0o755 };
+  };
+  assert.equal(findCodexPath({
+    platform: 'darwin',
+    homeDir: '/Users/tester',
+    env: { PATH: '' },
+    statSyncImpl,
+  }), currentPath);
+});
+
 test('Windows discovers packaged Codex and bundled sqlite tools', () => {
   const existing = new Set([
     'C:\\Users\\tester\\AppData\\Local\\Programs\\ChatGPT\\resources\\codex.exe',
