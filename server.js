@@ -32,7 +32,6 @@ const DEFAULT_ALARM_SECONDS = 24;
 const TEST_ALARM_SECONDS = 6;
 const MIN_ALARM_SECONDS = 5;
 const MAX_ALARM_SECONDS = 60;
-const ALARM_REPEAT_MS = 3500;
 const ALARM_SPEECH = {
   completed: 'Codex 任务完成了，请查看结果',
   failed: 'Codex 任务失败了，请查看结果',
@@ -1108,7 +1107,6 @@ class AlarmController {
     this.platform = options.platform || process.platform;
     this.env = options.env || process.env;
     this.defaultDurationSeconds = normalizeAlarmSeconds(options.defaultDurationSeconds);
-    this.repeatMs = clamp(Math.round(finiteNumber(options.repeatMs) || ALARM_REPEAT_MS), 1000, 10000);
     const windows = this.platform === 'win32';
     this.soundPlayer = options.soundPlayer || (windows ? windowsPowerShellPath(this.env) : STRONG_ALARM_SOUND_PLAYER);
     this.soundPath = options.soundPath || (windows ? findWindowsAlarmSound(options) : STRONG_ALARM_SOUND_PATH);
@@ -1184,25 +1182,6 @@ class AlarmController {
       };
     }
 
-    if (this.isActive()) {
-      try {
-        const interval = this.setIntervalImpl(() => {
-          if (!this._isCurrent(session)) return;
-          if (Date.now() >= session.endsAt) {
-            this._finishSession(session);
-            return;
-          }
-          this._playCycle(session, record, options);
-        }, this.repeatMs);
-        if (interval) {
-          session.intervals.add(interval);
-          this._unref(interval);
-        }
-      } catch (error) {
-        session.errors.push(safeError(error));
-      }
-    }
-
     const started = session.spawned > 0;
     return {
       ok: started || session.errors.length === 0,
@@ -1214,7 +1193,7 @@ class AlarmController {
       sound: { started: Boolean(session.channelStarted && session.channelStarted.sound) },
       speech: { started: Boolean(session.channelStarted && session.channelStarted.speech) },
       errors: session.errors.slice(0, 4),
-      message: started ? `强提醒已启动（${durationSeconds} 秒）` : '强提醒启动失败',
+      message: started ? '单次强提醒已启动' : '强提醒启动失败',
     };
   }
 

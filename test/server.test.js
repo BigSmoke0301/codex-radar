@@ -556,11 +556,12 @@ test('existing Radar probe recognizes only the local health response', async () 
   }
 });
 
-test('strong alarm repeats built-in sound and speech, stays single-session, and stops children', () => {
+test('strong alarm plays sound and speech once, stays single-session, and stops children', () => {
   const spawnCalls = [];
   const children = [];
   const clearedTimeouts = [];
   const clearedIntervals = [];
+  const createdIntervals = [];
   const spawnImpl = (command, args, options) => {
     const child = new EventEmitter();
     child.killCalls = [];
@@ -573,7 +574,11 @@ test('strong alarm repeats built-in sound and speech, stays single-session, and 
     spawnImpl,
     setTimeoutImpl: (callback, ms) => ({ callback, ms, unref() {} }),
     clearTimeoutImpl: (timer) => clearedTimeouts.push(timer),
-    setIntervalImpl: (callback, ms) => ({ callback, ms, unref() {} }),
+    setIntervalImpl: (callback, ms) => {
+      const interval = { callback, ms, unref() {} };
+      createdIntervals.push(interval);
+      return interval;
+    },
     clearIntervalImpl: (timer) => clearedIntervals.push(timer),
   });
 
@@ -586,6 +591,7 @@ test('strong alarm repeats built-in sound and speech, stays single-session, and 
   assert.equal(spawnCalls[0].command, STRONG_ALARM_SOUND_PLAYER);
   assert.equal(spawnCalls[1].command, STRONG_ALARM_SPEECH_PLAYER);
   assert.equal(spawnCalls[1].args[0], 'Codex 任务完成了，请查看结果');
+  assert.equal(createdIntervals.length, 0);
 
   const second = alarm.start({ status: 'failed' }, { durationSeconds: 100 });
   assert.equal(second.durationSeconds, MAX_ALARM_SECONDS);
@@ -599,7 +605,7 @@ test('strong alarm repeats built-in sound and speech, stays single-session, and 
   assert.equal(stopped.stopped, true);
   assert.equal(stopped.active, false);
   assert.equal(clearedTimeouts.length, 2);
-  assert.equal(clearedIntervals.length, 2);
+  assert.equal(clearedIntervals.length, 0);
   assert.deepEqual(children.slice(2).map((child) => child.killCalls), [['SIGTERM'], ['SIGTERM']]);
   assert.equal(alarm.isActive(), false);
   assert.equal(alarm.stopAlarm().stopped, false);
